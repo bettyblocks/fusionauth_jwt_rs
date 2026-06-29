@@ -12,10 +12,12 @@ library. It verifies RS256 (and RS384/RS512) tokens signed by FusionAuth by:
 2. verifying the RSASSA-PKCS1-v1_5 signature, and
 3. validating the `iss`, `aud` and `exp`/`nbf` claims.
 
-All crypto is pure Rust (`rsa` + `sha2`), so it links cleanly into a
-`wasm32-wasip2` component with no native dependencies. JWKS fetching goes
-through `wasi:http/outgoing-handler` — the host (wasmCloud) provides the
-transport.
+Verification — signature, algorithm, and the `iss`/`aud`/`exp`/`nbf` claims —
+is delegated to [`jsonwebtoken`](https://docs.rs/jsonwebtoken), built with its
+`rust_crypto` backend so the RSA crypto is pure Rust (no `ring`/`aws-lc-rs`/C).
+It builds and runs on `wasm32-wasip2` with only `wasi:*` imports (time resolves
+to `wasi:clocks`), so no JavaScript host is required. JWKS fetching goes through
+`wasi:http/outgoing-handler` — the host (wasmCloud) provides the transport.
 
 ## Usage
 
@@ -50,14 +52,15 @@ to inject keys you fetched yourself.
 ### Bring-your-own-keys (pure, runs on any target)
 
 If you fetch and cache the JWKS yourself (or want to unit-test), use the
-I/O-free path. You supply the `Jwks` and the current time (unix seconds):
+I/O-free path. You supply the `Jwks`; `exp`/`nbf` are checked against the
+system clock:
 
 ```rust
 use fusionauth_jwt_rs::{Jwks, Validation, Verifier};
 
 let jwks = Jwks::from_json(jwks_response_body)?;
 let verifier = Verifier::new("https://auth.example.com", validation);
-let claims = verifier.verify_with_jwks(jwt, &jwks, now_unix_seconds)?;
+let claims = verifier.verify_with_jwks(jwt, &jwks)?;
 ```
 
 ## wasmCloud / component wiring

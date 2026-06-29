@@ -1,8 +1,12 @@
 //! End-to-end tests of the pure verification path (`verify_with_jwks`), which
 //! runs on the host. The `wasi:http` fetching path is only reachable on
 //! `wasm32` and is covered by integration in a wasmCloud host.
+//!
+//! `jsonwebtoken` validates `exp`/`nbf` against the system clock, so tokens are
+//! signed relative to the current time rather than a fixed instant.
 
 use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use fusionauth_jwt_rs::{Error, Jwks, Validation, Verifier};
@@ -12,7 +16,14 @@ use sha2::{Digest, Sha256};
 
 const ISS: &str = "bettyblocks.com";
 const AUD: &str = "11111111-1111-1111-1111-111111111111";
-const NOW: i64 = 1_700_000_000;
+
+/// Current unix time in seconds.
+fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_secs() as i64
+}
 
 /// One 2048-bit key generated for the whole test binary.
 fn test_key() -> &'static RsaPrivateKey {
@@ -45,8 +56,9 @@ fn sign_jwt(kid: &str, alg: &str, claims_json: &str) -> String {
 }
 
 fn claims(exp: i64) -> String {
+    let iat = now();
     format!(
-        r#"{{"iss":"{ISS}","aud":"{AUD}","sub":"user-42","exp":{exp},"iat":{NOW},"cas_token":"cas-abc"}}"#
+        r#"{{"iss":"{ISS}","aud":"{AUD}","sub":"user-42","exp":{exp},"iat":{iat},"cas_token":"cas-abc"}}"#
     )
 }
 
@@ -60,10 +72,10 @@ fn verifier() -> Verifier {
 #[test]
 fn verifies_valid_token_and_returns_claims() {
     let jwks = jwks_for("id2", "RS256");
-    let jwt = sign_jwt("id2", "RS256", &claims(NOW + 3600));
+    let jwt = sign_jwt("id2", "RS256", &claims(now() + 3600));
 
     let result = verifier()
-        .verify_with_jwks(&jwt, &jwks, NOW)
+        .verify_with_jwks(&jwt, &jwks)
         .expect("token should verify");
 
     assert_eq!(result.iss.as_deref(), Some(ISS));
@@ -79,9 +91,9 @@ fn verifies_valid_token_and_returns_claims() {
 fn rejects_unknown_kid() {
     // JWKS only carries "id2", token signed under "id4".
     let jwks = jwks_for("id2", "RS256");
-    let jwt = sign_jwt("id4", "RS256", &claims(NOW + 3600));
+    let jwt = sign_jwt("id4", "RS256", &claims(now() + 3600));
 
-    match verifier().verify_with_jwks(&jwt, &jwks, NOW) {
+    match verifier().verify_with_jwks(&jwt, &jwks) {
         Err(Error::KidNotFound(kid)) => assert_eq!(kid, "id4"),
         other => panic!("expected KidNotFound, got {other:?}"),
     }
@@ -90,10 +102,10 @@ fn rejects_unknown_kid() {
 #[test]
 fn rejects_expired_token() {
     let jwks = jwks_for("id2", "RS256");
-    let jwt = sign_jwt("id2", "RS256", &claims(NOW - 10));
+    let jwt = sign_jwt("id2", "RS256", &claims(now() - 60));
 
     assert!(matches!(
-        verifier().verify_with_jwks(&jwt, &jwks, NOW),
+        verifier().verify_with_jwks(&jwt, &jwks),
         Err(Error::TokenExpired)
     ));
 }
@@ -101,26 +113,26 @@ fn rejects_expired_token() {
 #[test]
 fn honours_leeway_on_expiry() {
     let jwks = jwks_for("id2", "RS256");
-    // Expired 10s ago, but 30s of leeway keeps it valid.
-    let jwt = sign_jwt("id2", "RS256", &claims(NOW - 10));
+    // Expired 10s ago, but 60s of leeway keeps it valid.
+    let jwt = sign_jwt("id2", "RS256", &claims(now() - 10));
     let v = Verifier::new(
         "https://auth.example.com",
-        Validation::new().issuer(ISS).audience(AUD).leeway(30),
+        Validation::new().issuer(ISS).audience(AUD).leeway(60),
     );
-    assert!(v.verify_with_jwks(&jwt, &jwks, NOW).is_ok());
+    assert!(v.verify_with_jwks(&jwt, &jwks).is_ok());
 }
 
 #[test]
 fn rejects_wrong_audience() {
     let jwks = jwks_for("id2", "RS256");
-    let jwt = sign_jwt("id2", "RS256", &claims(NOW + 3600));
+    let jwt = sign_jwt("id2", "RS256", &claims(now() + 3600));
 
     let v = Verifier::new(
         "https://auth.example.com",
         Validation::new().issuer(ISS).audience("some-other-app"),
     );
     assert!(matches!(
-        v.verify_with_jwks(&jwt, &jwks, NOW),
+        v.verify_with_jwks(&jwt, &jwks),
         Err(Error::InvalidAudience)
     ));
 }
@@ -128,14 +140,14 @@ fn rejects_wrong_audience() {
 #[test]
 fn rejects_wrong_issuer() {
     let jwks = jwks_for("id2", "RS256");
-    let jwt = sign_jwt("id2", "RS256", &claims(NOW + 3600));
+    let jwt = sign_jwt("id2", "RS256", &claims(now() + 3600));
 
     let v = Verifier::new(
         "https://auth.example.com",
         Validation::new().issuer("evil.example").audience(AUD),
     );
     assert!(matches!(
-        v.verify_with_jwks(&jwt, &jwks, NOW),
+        v.verify_with_jwks(&jwt, &jwks),
         Err(Error::InvalidIssuer)
     ));
 }
@@ -143,16 +155,18 @@ fn rejects_wrong_issuer() {
 #[test]
 fn rejects_tampered_signature() {
     let jwks = jwks_for("id2", "RS256");
-    let jwt = sign_jwt("id2", "RS256", &claims(NOW + 3600));
+    let jwt = sign_jwt("id2", "RS256", &claims(now() + 3600));
 
-    // Flip the last character of the signature segment.
+    // Flip the first character of the signature segment. (Flipping the *last*
+    // char can yield non-canonical base64, which decodes-error before the
+    // signature is ever checked.)
+    let sig_start = jwt.rfind('.').unwrap() + 1;
     let mut bytes = jwt.into_bytes();
-    let last = bytes.len() - 1;
-    bytes[last] = if bytes[last] == b'A' { b'B' } else { b'A' };
+    bytes[sig_start] = if bytes[sig_start] == b'A' { b'B' } else { b'A' };
     let tampered = String::from_utf8(bytes).unwrap();
 
     assert!(matches!(
-        verifier().verify_with_jwks(&tampered, &jwks, NOW),
+        verifier().verify_with_jwks(&tampered, &jwks),
         Err(Error::InvalidSignature)
     ));
 }
@@ -162,10 +176,10 @@ fn rejects_algorithm_confusion() {
     // JWK pins RS256 but the header claims RS512: must be rejected even though
     // the signature itself is consistent with the header.
     let jwks = jwks_for("id2", "RS256");
-    let jwt = sign_jwt("id2", "RS512", &claims(NOW + 3600));
+    let jwt = sign_jwt("id2", "RS512", &claims(now() + 3600));
 
     assert!(matches!(
-        verifier().verify_with_jwks(&jwt, &jwks, NOW),
+        verifier().verify_with_jwks(&jwt, &jwks),
         Err(Error::UnsupportedAlgorithm(_))
     ));
 }
@@ -174,7 +188,7 @@ fn rejects_algorithm_confusion() {
 fn rejects_malformed_token() {
     let jwks = jwks_for("id2", "RS256");
     assert!(matches!(
-        verifier().verify_with_jwks("not-a-jwt", &jwks, NOW),
+        verifier().verify_with_jwks("not-a-jwt", &jwks),
         Err(Error::MalformedToken)
     ));
 }

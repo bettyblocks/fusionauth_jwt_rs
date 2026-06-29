@@ -1,8 +1,7 @@
 //! JSON Web Key Set handling, as served by FusionAuth's
 //! `/.well-known/jwks.json` endpoint.
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use rsa::{BigUint, RsaPublicKey};
+use jsonwebtoken::{Algorithm, DecodingKey};
 use serde::Deserialize;
 
 use crate::error::Error;
@@ -16,7 +15,8 @@ pub struct Jwk {
     pub kid: Option<String>,
     /// Key type. Must be `"RSA"`.
     pub kty: String,
-    /// Intended algorithm, e.g. `"RS256"`. Used to reject algorithm confusion.
+    /// Intended algorithm, e.g. `"RS256"`. When present it pins verification to
+    /// that algorithm regardless of the token header.
     #[serde(default)]
     pub alg: Option<String>,
     /// Modulus, base64url-encoded.
@@ -28,19 +28,28 @@ pub struct Jwk {
 }
 
 impl Jwk {
-    /// Build an [`RsaPublicKey`] from the JWK's `n`/`e` parameters.
-    pub fn to_rsa_public_key(&self) -> Result<RsaPublicKey, Error> {
+    /// Build a [`DecodingKey`] and its pinned [`Algorithm`] from the JWK.
+    ///
+    /// The algorithm is taken from the JWK's `alg` when present (pinning it),
+    /// otherwise from `header_alg`. Pinning is what blocks algorithm confusion:
+    /// a key advertised as `RS256` only ever verifies `RS256` tokens.
+    pub(crate) fn to_decoding_key(&self, header_alg: &str) -> Result<(DecodingKey, Algorithm), Error> {
         if self.kty != "RSA" {
             return Err(Error::InvalidKey);
         }
         let n = self.n.as_deref().ok_or(Error::InvalidKey)?;
         let e = self.e.as_deref().ok_or(Error::InvalidKey)?;
 
-        let n = URL_SAFE_NO_PAD.decode(n).map_err(|_| Error::InvalidKey)?;
-        let e = URL_SAFE_NO_PAD.decode(e).map_err(|_| Error::InvalidKey)?;
+        let alg = match self.alg.as_deref().unwrap_or(header_alg) {
+            "RS256" => Algorithm::RS256,
+            "RS384" => Algorithm::RS384,
+            "RS512" => Algorithm::RS512,
+            other => return Err(Error::UnsupportedAlgorithm(other.to_string())),
+        };
 
-        RsaPublicKey::new(BigUint::from_bytes_be(&n), BigUint::from_bytes_be(&e))
-            .map_err(|_| Error::InvalidKey)
+        // `from_rsa_components` takes the base64url `n`/`e` strings as-is.
+        let key = DecodingKey::from_rsa_components(n, e).map_err(|_| Error::InvalidKey)?;
+        Ok((key, alg))
     }
 }
 

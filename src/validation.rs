@@ -1,38 +1,22 @@
-//! Claim validation, mirroring Joken's `default_claims` with the `iss`/`aud`
-//! options used by the Elixir `fusion_jwt_authentication` library.
+//! Claim validation policy, translated onto `jsonwebtoken`'s [`Validation`].
+//! `jsonwebtoken` performs all of the registered-claim checks
+//! (`iss`/`aud`/`exp`/`nbf`) against the system clock. Mirrors the `iss`/`aud`/
+//! `exp` options used by the Elixir `fusion_jwt_authentication` library.
+//!
+//! [`Validation`]: jsonwebtoken::Validation
 
-use crate::error::Error;
-use crate::token::Claims;
+use jsonwebtoken::{Algorithm, Validation as JwtValidation};
 
 /// Which claims to enforce and how. Build with [`Validation::new`] and the
 /// chained setters.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Validation {
     /// Required issuer (`iss`). `None` skips the check.
     pub issuer: Option<String>,
     /// Required audience (`aud`). `None` skips the check.
     pub audience: Option<String>,
-    /// Enforce `exp` (expiry).
-    pub validate_exp: bool,
-    /// Enforce `nbf` (not-before) when the claim is present.
-    pub validate_nbf: bool,
-    /// Reject tokens that carry no `exp` at all.
-    pub require_exp: bool,
-    /// Clock-skew tolerance, in seconds.
+    /// Clock-skew tolerance, in seconds, applied to `exp`/`nbf`.
     pub leeway: i64,
-}
-
-impl Default for Validation {
-    fn default() -> Self {
-        Validation {
-            issuer: None,
-            audience: None,
-            validate_exp: true,
-            validate_nbf: true,
-            require_exp: true,
-            leeway: 0,
-        }
-    }
 }
 
 impl Validation {
@@ -58,41 +42,33 @@ impl Validation {
         self.leeway = seconds;
         self
     }
-}
 
-/// Validate the registered claims against `validation`, treating `now` as the
-/// current time (unix seconds).
-pub fn validate_claims(claims: &Claims, validation: &Validation, now: i64) -> Result<(), Error> {
-    if let Some(expected) = &validation.issuer {
-        match &claims.iss {
-            Some(iss) if iss == expected => {}
-            _ => return Err(Error::InvalidIssuer),
+    /// Build the `jsonwebtoken` validation for this policy and signing
+    /// algorithm. `jsonwebtoken` checks the signature, algorithm, `exp`/`nbf`,
+    /// and (when configured) `iss`/`aud`.
+    pub(crate) fn to_jwt_validation(&self, alg: Algorithm) -> JwtValidation {
+        let mut v = JwtValidation::new(alg);
+        v.leeway = self.leeway.max(0) as u64;
+
+        // `exp` is always required; require `iss`/`aud` too when constrained, so
+        // a token that simply omits an expected claim is rejected.
+        let mut required = vec!["exp".to_string()];
+
+        if let Some(iss) = &self.issuer {
+            v.set_issuer(&[iss]);
+            required.push("iss".to_string());
         }
-    }
 
-    if let Some(expected) = &validation.audience {
-        match &claims.aud {
-            Some(aud) if aud.contains(expected) => {}
-            _ => return Err(Error::InvalidAudience),
+        if let Some(aud) = &self.audience {
+            v.set_audience(&[aud]);
+            required.push("aud".to_string());
+        } else {
+            // Without an expected audience, don't reject tokens that carry one
+            // (FusionAuth always sets `aud`).
+            v.validate_aud = false;
         }
-    }
 
-    if validation.validate_exp {
-        match claims.exp {
-            // Expired once now has advanced past exp + leeway.
-            Some(exp) if now - validation.leeway >= exp => return Err(Error::TokenExpired),
-            Some(_) => {}
-            None if validation.require_exp => return Err(Error::MissingClaim("exp")),
-            None => {}
-        }
+        v.set_required_spec_claims(&required);
+        v
     }
-
-    if validation.validate_nbf
-        && let Some(nbf) = claims.nbf
-        && now + validation.leeway < nbf
-    {
-        return Err(Error::TokenNotYetValid);
-    }
-
-    Ok(())
 }
