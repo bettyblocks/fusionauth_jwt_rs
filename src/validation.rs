@@ -6,9 +6,6 @@ use std::collections::HashSet;
 
 use jwt_simple::prelude::{Duration, UnixTimeStamp, VerificationOptions};
 
-use crate::error::Error;
-use crate::token::Claims;
-
 /// Which claims to enforce and how. Build with [`Validation::new`] and the
 /// chained setters.
 #[derive(Debug, Clone)]
@@ -17,9 +14,6 @@ pub struct Validation {
     pub issuer: Option<String>,
     /// Required audience (`aud`). `None` skips the check.
     pub audience: Option<String>,
-    /// Reject tokens that carry no `exp` at all. (`jwt-simple` always validates
-    /// an `exp` that *is* present; this additionally requires its presence.)
-    pub require_exp: bool,
     /// Clock-skew tolerance, in seconds, applied to `exp`/`nbf`.
     pub leeway: i64,
 }
@@ -29,7 +23,6 @@ impl Default for Validation {
         Validation {
             issuer: None,
             audience: None,
-            require_exp: true,
             leeway: 0,
         }
     }
@@ -73,18 +66,10 @@ impl Validation {
                 .audience
                 .as_ref()
                 .map(|aud| HashSet::from([aud.clone()])),
-            time_tolerance: Some(Duration::from_secs(self.leeway.max(0) as u64)),
+            accept_future: false,
             artificial_time: now.map(|t| UnixTimeStamp::from_secs(t.max(0) as u64)),
+            time_tolerance: Some(Duration::from_secs(self.leeway.max(0) as u64)),
             ..Default::default()
         }
-    }
-
-    /// Checks `jwt-simple` does not perform itself. Currently only the
-    /// "an `exp` must be present" rule, when [`Validation::require_exp`] is set.
-    pub(crate) fn check_extra(&self, claims: &Claims) -> Result<(), Error> {
-        if self.require_exp && claims.exp.is_none() {
-            return Err(Error::MissingClaim("exp"));
-        }
-        Ok(())
     }
 }

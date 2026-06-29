@@ -106,9 +106,19 @@ impl Verifier {
         }
         .map_err(|e| map_jwt_error(e, &header_alg))?;
 
-        let claims = to_claims(verified);
-        self.validation.check_extra(&claims)?;
-        Ok(claims)
+        // Map `jwt-simple`'s registered + custom claims onto our `Claims`.
+        Ok(Claims {
+            iss: verified.issuer,
+            sub: verified.subject,
+            aud: verified.audiences.map(|a| match a {
+                Audiences::AsString(s) => Audience::Single(s),
+                Audiences::AsSet(set) => Audience::Multiple(set.into_iter().collect()),
+            }),
+            exp: verified.expires_at.map(|d| d.as_secs() as i64),
+            nbf: verified.invalid_before.map(|d| d.as_secs() as i64),
+            iat: verified.issued_at.map(|d| d.as_secs() as i64),
+            extra: verified.custom,
+        })
     }
 }
 
@@ -163,21 +173,5 @@ fn map_jwt_error(err: JwtError, header_alg: &str) -> Error {
         Some(JWTError::AlgorithmMismatch) => Error::UnsupportedAlgorithm(header_alg.to_string()),
         Some(JWTError::CompactEncodingError | JWTError::NotJWT) => Error::MalformedToken,
         _ => Error::InvalidSignature,
-    }
-}
-
-/// Map `jwt-simple`'s registered + custom claims onto this crate's [`Claims`].
-fn to_claims(jc: JWTClaims<Extra>) -> Claims {
-    Claims {
-        iss: jc.issuer,
-        sub: jc.subject,
-        aud: jc.audiences.map(|a| match a {
-            Audiences::AsString(s) => Audience::Single(s),
-            Audiences::AsSet(set) => Audience::Multiple(set.into_iter().collect()),
-        }),
-        exp: jc.expires_at.map(|d| d.as_secs() as i64),
-        nbf: jc.invalid_before.map(|d| d.as_secs() as i64),
-        iat: jc.issued_at.map(|d| d.as_secs() as i64),
-        extra: jc.custom,
     }
 }
