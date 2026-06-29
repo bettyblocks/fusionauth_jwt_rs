@@ -1,5 +1,10 @@
-//! Claim validation, mirroring Joken's `default_claims` with the `iss`/`aud`
-//! options used by the Elixir `fusion_jwt_authentication` library.
+//! Claim validation policy, translated onto `jwt-simple`'s
+//! [`VerificationOptions`]. Mirrors the `iss`/`aud`/`exp` options used by the
+//! Elixir `fusion_jwt_authentication` library.
+
+use std::collections::HashSet;
+
+use jwt_simple::prelude::{Duration, UnixTimeStamp, VerificationOptions};
 
 use crate::error::Error;
 use crate::token::Claims;
@@ -12,13 +17,10 @@ pub struct Validation {
     pub issuer: Option<String>,
     /// Required audience (`aud`). `None` skips the check.
     pub audience: Option<String>,
-    /// Enforce `exp` (expiry).
-    pub validate_exp: bool,
-    /// Enforce `nbf` (not-before) when the claim is present.
-    pub validate_nbf: bool,
-    /// Reject tokens that carry no `exp` at all.
+    /// Reject tokens that carry no `exp` at all. (`jwt-simple` always validates
+    /// an `exp` that *is* present; this additionally requires its presence.)
     pub require_exp: bool,
-    /// Clock-skew tolerance, in seconds.
+    /// Clock-skew tolerance, in seconds, applied to `exp`/`nbf`.
     pub leeway: i64,
 }
 
@@ -27,8 +29,6 @@ impl Default for Validation {
         Validation {
             issuer: None,
             audience: None,
-            validate_exp: true,
-            validate_nbf: true,
             require_exp: true,
             leeway: 0,
         }
@@ -58,41 +58,33 @@ impl Validation {
         self.leeway = seconds;
         self
     }
-}
 
-/// Validate the registered claims against `validation`, treating `now` as the
-/// current time (unix seconds).
-pub fn validate_claims(claims: &Claims, validation: &Validation, now: i64) -> Result<(), Error> {
-    if let Some(expected) = &validation.issuer {
-        match &claims.iss {
-            Some(iss) if iss == expected => {}
-            _ => return Err(Error::InvalidIssuer),
+    /// Build the `jwt-simple` options for this policy.
+    ///
+    /// `now` injects the current time (unix seconds) for deterministic
+    /// verification; pass `None` to use the real clock (`wasi:clocks` on wasm).
+    pub(crate) fn to_options(&self, now: Option<i64>) -> VerificationOptions {
+        VerificationOptions {
+            allowed_issuers: self
+                .issuer
+                .as_ref()
+                .map(|iss| HashSet::from([iss.clone()])),
+            allowed_audiences: self
+                .audience
+                .as_ref()
+                .map(|aud| HashSet::from([aud.clone()])),
+            time_tolerance: Some(Duration::from_secs(self.leeway.max(0) as u64)),
+            artificial_time: now.map(|t| UnixTimeStamp::from_secs(t.max(0) as u64)),
+            ..Default::default()
         }
     }
 
-    if let Some(expected) = &validation.audience {
-        match &claims.aud {
-            Some(aud) if aud.contains(expected) => {}
-            _ => return Err(Error::InvalidAudience),
+    /// Checks `jwt-simple` does not perform itself. Currently only the
+    /// "an `exp` must be present" rule, when [`Validation::require_exp`] is set.
+    pub(crate) fn check_extra(&self, claims: &Claims) -> Result<(), Error> {
+        if self.require_exp && claims.exp.is_none() {
+            return Err(Error::MissingClaim("exp"));
         }
+        Ok(())
     }
-
-    if validation.validate_exp {
-        match claims.exp {
-            // Expired once now has advanced past exp + leeway.
-            Some(exp) if now - validation.leeway >= exp => return Err(Error::TokenExpired),
-            Some(_) => {}
-            None if validation.require_exp => return Err(Error::MissingClaim("exp")),
-            None => {}
-        }
-    }
-
-    if validation.validate_nbf
-        && let Some(nbf) = claims.nbf
-        && now + validation.leeway < nbf
-    {
-        return Err(Error::TokenNotYetValid);
-    }
-
-    Ok(())
 }

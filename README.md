@@ -12,10 +12,12 @@ library. It verifies RS256 (and RS384/RS512) tokens signed by FusionAuth by:
 2. verifying the RSASSA-PKCS1-v1_5 signature, and
 3. validating the `iss`, `aud` and `exp`/`nbf` claims.
 
-All crypto is pure Rust (`rsa` + `sha2`), so it links cleanly into a
-`wasm32-wasip2` component with no native dependencies. JWKS fetching goes
-through `wasi:http/outgoing-handler` — the host (wasmCloud) provides the
-transport.
+Signature verification and claim checks are delegated to
+[`jwt-simple`](https://docs.rs/jwt-simple), built with its `pure-rust` feature
+so the RustCrypto backend (not BoringSSL) is used on every target — it links
+cleanly into a `wasm32-wasip2` component with no native dependencies. JWKS
+fetching goes through `wasi:http/outgoing-handler` — the host (wasmCloud)
+provides the transport.
 
 ## Usage
 
