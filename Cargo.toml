@@ -12,11 +12,10 @@ categories = ["authentication", "wasm"]
 crate-type = ["rlib"]
 
 [dependencies]
-base64 = "0.22"
-# RS256/384/512 verification + claim validation. `pure-rust` forces the
-# RustCrypto backend (no `boring`/BoringSSL/cmake) on every target, so the host
-# build and the `wasm32-wasip2` component share the same pure-Rust crypto.
-jwt-simple = { version = "0.12", default-features = false, features = ["pure-rust"] }
+# RS256/384/512 verification + claim validation. The `rust_crypto` backend is
+# pure Rust (no `ring`/`aws-lc-rs`/C), so it builds and runs on `wasm32-wasip2`;
+# `default-features = false` drops the PEM/`aws-lc-rs` machinery we don't use.
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -26,7 +25,8 @@ serde_json = "1"
 wasi = "0.14"
 
 [dev-dependencies]
-# The test harness signs sample tokens itself, so it needs raw RSA + SHA-2.
-# These are test-only; the library proper verifies via `jwt-simple`.
+# The test harness signs sample tokens itself, so it needs raw RSA + SHA-2 and
+# base64. These are test-only; the library verifies via `jsonwebtoken`.
 rsa = { version = "0.9", features = ["pem"] }
 sha2 = { version = "0.10", features = ["oid"] }
+base64 = "0.22"

@@ -1,14 +1,15 @@
-//! Claim validation policy, translated onto `jwt-simple`'s
-//! [`VerificationOptions`]. Mirrors the `iss`/`aud`/`exp` options used by the
-//! Elixir `fusion_jwt_authentication` library.
+//! Claim validation policy, translated onto `jsonwebtoken`'s [`Validation`].
+//! `jsonwebtoken` performs all of the registered-claim checks
+//! (`iss`/`aud`/`exp`/`nbf`) against the system clock. Mirrors the `iss`/`aud`/
+//! `exp` options used by the Elixir `fusion_jwt_authentication` library.
+//!
+//! [`Validation`]: jsonwebtoken::Validation
 
-use std::collections::HashSet;
-
-use jwt_simple::prelude::{Duration, UnixTimeStamp, VerificationOptions};
+use jsonwebtoken::{Algorithm, Validation as JwtValidation};
 
 /// Which claims to enforce and how. Build with [`Validation::new`] and the
 /// chained setters.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Validation {
     /// Required issuer (`iss`). `None` skips the check.
     pub issuer: Option<String>,
@@ -16,16 +17,6 @@ pub struct Validation {
     pub audience: Option<String>,
     /// Clock-skew tolerance, in seconds, applied to `exp`/`nbf`.
     pub leeway: i64,
-}
-
-impl Default for Validation {
-    fn default() -> Self {
-        Validation {
-            issuer: None,
-            audience: None,
-            leeway: 0,
-        }
-    }
 }
 
 impl Validation {
@@ -52,24 +43,32 @@ impl Validation {
         self
     }
 
-    /// Build the `jwt-simple` options for this policy.
-    ///
-    /// `now` injects the current time (unix seconds) for deterministic
-    /// verification; pass `None` to use the real clock (`wasi:clocks` on wasm).
-    pub(crate) fn to_options(&self, now: Option<i64>) -> VerificationOptions {
-        VerificationOptions {
-            allowed_issuers: self
-                .issuer
-                .as_ref()
-                .map(|iss| HashSet::from([iss.clone()])),
-            allowed_audiences: self
-                .audience
-                .as_ref()
-                .map(|aud| HashSet::from([aud.clone()])),
-            accept_future: false,
-            artificial_time: now.map(|t| UnixTimeStamp::from_secs(t.max(0) as u64)),
-            time_tolerance: Some(Duration::from_secs(self.leeway.max(0) as u64)),
-            ..Default::default()
+    /// Build the `jsonwebtoken` validation for this policy and signing
+    /// algorithm. `jsonwebtoken` checks the signature, algorithm, `exp`/`nbf`,
+    /// and (when configured) `iss`/`aud`.
+    pub(crate) fn to_jwt_validation(&self, alg: Algorithm) -> JwtValidation {
+        let mut v = JwtValidation::new(alg);
+        v.leeway = self.leeway.max(0) as u64;
+
+        // `exp` is always required; require `iss`/`aud` too when constrained, so
+        // a token that simply omits an expected claim is rejected.
+        let mut required = vec!["exp".to_string()];
+
+        if let Some(iss) = &self.issuer {
+            v.set_issuer(&[iss]);
+            required.push("iss".to_string());
         }
+
+        if let Some(aud) = &self.audience {
+            v.set_audience(&[aud]);
+            required.push("aud".to_string());
+        } else {
+            // Without an expected audience, don't reject tokens that carry one
+            // (FusionAuth always sets `aud`).
+            v.validate_aud = false;
+        }
+
+        v.set_required_spec_claims(&required);
+        v
     }
 }

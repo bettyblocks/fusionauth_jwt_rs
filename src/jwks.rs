@@ -1,22 +1,14 @@
 //! JSON Web Key Set handling, as served by FusionAuth's
 //! `/.well-known/jwks.json` endpoint.
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use jwt_simple::prelude::{RS256PublicKey, RS384PublicKey, RS512PublicKey};
+use jsonwebtoken::{Algorithm, DecodingKey};
+use serde::Deserialize;
 
 use crate::error::Error;
 
-/// An RSA verifying key, with the digest variant pinned at construction so the
-/// token header's `alg` cannot be substituted (algorithm-confusion guard).
-pub(crate) enum VerifyingKey {
-    Rs256(RS256PublicKey),
-    Rs384(RS384PublicKey),
-    Rs512(RS512PublicKey),
-}
-
 /// A single JSON Web Key. Only the fields needed for RSA verification are
 /// modelled; unknown fields are ignored.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Jwk {
     /// Key id, matched against the token header's `kid`.
     #[serde(default)]
@@ -36,39 +28,33 @@ pub struct Jwk {
 }
 
 impl Jwk {
-    /// Build a [`VerifyingKey`] from the JWK's `n`/`e` parameters.
+    /// Build a [`DecodingKey`] and its pinned [`Algorithm`] from the JWK.
     ///
     /// The algorithm is taken from the JWK's `alg` when present (pinning it),
-    /// otherwise from `header_alg`. This is what blocks algorithm confusion: a
-    /// key advertised as `RS256` only ever yields an `RS256` verifier.
-    pub(crate) fn to_verifying_key(&self, header_alg: &str) -> Result<VerifyingKey, Error> {
+    /// otherwise from `header_alg`. Pinning is what blocks algorithm confusion:
+    /// a key advertised as `RS256` only ever verifies `RS256` tokens.
+    pub(crate) fn to_decoding_key(&self, header_alg: &str) -> Result<(DecodingKey, Algorithm), Error> {
         if self.kty != "RSA" {
             return Err(Error::InvalidKey);
         }
         let n = self.n.as_deref().ok_or(Error::InvalidKey)?;
         let e = self.e.as_deref().ok_or(Error::InvalidKey)?;
-        let n = URL_SAFE_NO_PAD.decode(n).map_err(|_| Error::InvalidKey)?;
-        let e = URL_SAFE_NO_PAD.decode(e).map_err(|_| Error::InvalidKey)?;
 
-        let alg = self.alg.as_deref().unwrap_or(header_alg);
-        let key = match alg {
-            "RS256" => VerifyingKey::Rs256(
-                RS256PublicKey::from_components(&n, &e).map_err(|_| Error::InvalidKey)?,
-            ),
-            "RS384" => VerifyingKey::Rs384(
-                RS384PublicKey::from_components(&n, &e).map_err(|_| Error::InvalidKey)?,
-            ),
-            "RS512" => VerifyingKey::Rs512(
-                RS512PublicKey::from_components(&n, &e).map_err(|_| Error::InvalidKey)?,
-            ),
+        let alg = match self.alg.as_deref().unwrap_or(header_alg) {
+            "RS256" => Algorithm::RS256,
+            "RS384" => Algorithm::RS384,
+            "RS512" => Algorithm::RS512,
             other => return Err(Error::UnsupportedAlgorithm(other.to_string())),
         };
-        Ok(key)
+
+        // `from_rsa_components` takes the base64url `n`/`e` strings as-is.
+        let key = DecodingKey::from_rsa_components(n, e).map_err(|_| Error::InvalidKey)?;
+        Ok((key, alg))
     }
 }
 
 /// A set of JSON Web Keys.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Jwks {
     pub keys: Vec<Jwk>,
 }
