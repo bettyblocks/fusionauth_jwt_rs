@@ -13,11 +13,12 @@
 //!
 //! # Two ways to use it
 //!
-//! 1. **Self-contained** ([`Verifier::verify_token`]): fetches the JWKS from
-//!    FusionAuth, caches it, matches the token's `kid`, verifies the RS256
-//!    signature and validates the claims. Like the Elixir `JWKS_Strategy`, it
-//!    refetches the JWKS once if a `kid` is unknown. The transport is `wasi:http`
-//!    on wasm (`wasip2`/`wasip3` feature) or a blocking `ureq` client on native.
+//! 1. **Self-contained** ([`Verifier::verify_token`], needs a backend feature):
+//!    fetches the JWKS from FusionAuth, caches it, matches the token's `kid`,
+//!    verifies the RS256 signature and validates the claims. Like the Elixir
+//!    `JWKS_Strategy`, it refetches the JWKS once if a `kid` is unknown. Enable
+//!    `wasip2`/`wasip3` on wasm, or `native-http` (a blocking `ureq` client) on
+//!    native.
 //!
 //! 2. **Bring-your-own-keys** ([`Verifier::verify_with_jwks`], all targets):
 //!    you supply the [`Jwks`]. No I/O, so it runs and tests anywhere. Use this
@@ -31,7 +32,13 @@ mod jwks;
 mod token;
 mod validation;
 
-// The JWKS-fetch backend is opt-in via a feature matching the build target.
+// The JWKS-fetch backend (and `verify_token`) is opt-in via a feature matching
+// the build target; without one, only `verify_with_jwks` is available.
+#[cfg(any(
+    all(not(target_arch = "wasm32"), feature = "native-http"),
+    all(target_arch = "wasm32", feature = "wasip2"),
+    all(target_arch = "wasm32", feature = "wasip3"),
+))]
 mod http;
 
 use jsonwebtoken::errors::ErrorKind;
@@ -102,12 +109,18 @@ impl Verifier {
     }
 }
 
+#[cfg(any(
+    all(not(target_arch = "wasm32"), feature = "native-http"),
+    all(target_arch = "wasm32", feature = "wasip2"),
+    all(target_arch = "wasm32", feature = "wasip3"),
+))]
 impl Verifier {
     /// Verify a token end to end: fetch (and cache) the JWKS, match the `kid`,
     /// verify the signature and validate the claims.
     ///
-    /// The JWKS is fetched over the per-target backend: `wasi:http` on wasm
-    /// (`wasip2`/`wasip3` feature), or a blocking `ureq` client on native.
+    /// Requires a backend feature: `native-http` on native, or `wasip2`/`wasip3`
+    /// on wasm. The JWKS is fetched over `wasi:http` (wasm) or a blocking `ureq`
+    /// client (native).
     ///
     /// Mirrors the Elixir `JWKS_Strategy`: if the token's `kid` is not in the
     /// cached set, the JWKS is refetched once (keys may have rotated) before

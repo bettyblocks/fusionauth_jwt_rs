@@ -20,19 +20,19 @@ to `wasi:clocks`), so no JavaScript host is required.
 
 ### JWKS fetch backends
 
-`Verifier::verify_token` fetches the JWKS itself. On **native targets it works
-out of the box** (blocking `ureq`); on **wasm you pick a backend feature** so
-only the dependency you need is compiled in:
+`Verifier::verify_token` fetches the JWKS itself. The backend is chosen with a
+feature — **none is enabled by default**, so a consumer only pulls in the single
+dependency it needs (a wasm build never compiles `ureq`, and vice versa):
 
-| Target | Feature | Transport | Dependency | Notes |
+| Feature | Target | Transport | Dependency | Notes |
 | --- | --- | --- | --- | --- |
-| native (non-wasm) | _(none — default)_ | blocking `ureq` | `ureq` | always available |
-| `wasm32-wasip2` | `wasip2` | `wasi:http/outgoing-handler@0.2` | `wasi` | host provides transport |
-| `wasm32-wasip3` | `wasip3` | `wasi:http` 0.3 | `wasi-fetch`, `wasip3` | async, bridged via `block_on`; not yet build-verified |
+| `native-http` | native (non-wasm) | blocking `ureq` | `ureq` | |
+| `wasip2` | `wasm32-wasip2` | `wasi:http/outgoing-handler@0.2` | `wasi` | host provides transport |
+| `wasip3` | `wasm32-wasip3` | `wasi:http` 0.3 | `wasi-fetch`, `wasip3` | async, bridged via `block_on`; not yet build-verified |
 
-`wasip2` and `wasip3` are mutually exclusive, and a wasm build with neither is a
-compile error. If you fetch the JWKS yourself, use `verify_with_jwks` instead —
-it needs no backend and works on every target.
+`wasip2` and `wasip3` are mutually exclusive. Without a backend feature,
+`verify_token` is simply not compiled — use `verify_with_jwks` instead, which
+needs no backend and works on every target.
 
 ## Usage
 
@@ -44,13 +44,13 @@ fusionauth_jwt_rs = { git = "https://github.com/bettyblocks/fusionauth_jwt_rs" }
 
 ### Self-contained (fetches the JWKS itself)
 
-Native works as-is; on wasm enable the feature for your target:
+Enable the backend feature for your target:
 
 ```toml
-# Cargo.toml
-fusionauth_jwt_rs = { git = "..." }                          # native (ureq)
-fusionauth_jwt_rs = { git = "...", features = ["wasip2"] }   # wasm32-wasip2
-fusionauth_jwt_rs = { git = "...", features = ["wasip3"] }   # wasm32-wasip3
+# Cargo.toml — pick one:
+fusionauth_jwt_rs = { git = "...", features = ["native-http"] }  # native (ureq)
+fusionauth_jwt_rs = { git = "...", features = ["wasip2"] }       # wasm32-wasip2
+fusionauth_jwt_rs = { git = "...", features = ["wasip3"] }       # wasm32-wasip3
 ```
 
 ```rust
@@ -129,7 +129,8 @@ This crate covers the **verification** core only:
 ## Development
 
 ```sh
-cargo test                                            # host tests (native ureq backend included)
+cargo test                                            # host tests of the pure verification path
+cargo build --features native-http                    # native fetch backend (ureq)
 cargo build --target wasm32-wasip2 --features wasip2  # confirm the wasi:http 0.2 path compiles
 cargo clippy --all-targets
 cargo clippy --target wasm32-wasip2 --features wasip2
