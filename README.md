@@ -20,15 +20,17 @@ to `wasi:clocks`), so no JavaScript host is required.
 
 ### JWKS fetch backends
 
-`Verifier::verify_token` fetches the JWKS itself. One backend is compiled per
-target:
+`Verifier::verify_token` fetches the JWKS itself. The backend is chosen with a
+feature — **none is enabled by default**, so a consumer only ever pulls in the
+single dependency it needs (and `verify_with_jwks` works with no feature at all):
 
-| Target | Transport | Notes |
-| --- | --- | --- |
-| `wasm32-wasip2` | `wasi:http/outgoing-handler@0.2` (`wasi` crate) | host provides transport |
-| `wasm32-wasip3` | `wasi:http` 0.3 (`wasi-fetch`) | async, bridged via `block_on`; not yet build-verified |
-| native (non-wasm) | blocking `ureq` | behind the **`native-http`** feature (off by default) |
+| Feature | Target | Transport | Dependency | Notes |
+| --- | --- | --- | --- | --- |
+| `wasip2` | `wasm32-wasip2` | `wasi:http/outgoing-handler@0.2` | `wasi` | host provides transport |
+| `wasip3` | `wasm32-wasip3` | `wasi:http` 0.3 | `wasi-fetch`, `wasip3` | async, bridged via `block_on`; not yet build-verified |
+| `native-http` | native (non-wasm) | blocking `ureq` | `ureq` | |
 
+`wasip2` and `wasip3` are mutually exclusive (enabling both is a compile error).
 If you fetch the JWKS yourself, use `verify_with_jwks` instead — it needs no
 backend and works on every target.
 
@@ -42,11 +44,13 @@ fusionauth_jwt_rs = { git = "https://github.com/bettyblocks/fusionauth_jwt_rs" }
 
 ### Self-contained (fetches the JWKS itself)
 
-Available on the wasm targets, and on native with the `native-http` feature:
+Enable the feature for your target (see the table above):
 
 ```toml
-# Cargo.toml — for native (non-wasm) use:
-fusionauth_jwt_rs = { git = "...", features = ["native-http"] }
+# Cargo.toml — pick one:
+fusionauth_jwt_rs = { git = "...", features = ["wasip2"] }       # wasm32-wasip2
+fusionauth_jwt_rs = { git = "...", features = ["wasip3"] }       # wasm32-wasip3
+fusionauth_jwt_rs = { git = "...", features = ["native-http"] }  # native
 ```
 
 ```rust
@@ -125,16 +129,16 @@ This crate covers the **verification** core only:
 ## Development
 
 ```sh
-cargo test                                  # host tests of the pure verification path
-cargo build --features native-http          # native fetch backend (ureq)
-cargo build --target wasm32-wasip2          # confirm the wasi:http 0.2 path compiles
-cargo clippy --all-targets
-cargo clippy --target wasm32-wasip2
+cargo test                                            # host tests of the pure verification path
+cargo build --features native-http                    # native fetch backend (ureq)
+cargo build --target wasm32-wasip2 --features wasip2  # confirm the wasi:http 0.2 path compiles
+cargo clippy --features native-http --all-targets
+cargo clippy --target wasm32-wasip2 --features wasip2
 ```
 
-The `wasm32-wasip3` backend (`wasi:http` 0.3) is gated on `target_env = "p3"`;
-building it needs a `wasm32-wasip3` toolchain (currently built from source on
-nightly), which is why it is not part of the routine checks above.
+The `wasip3` backend (`wasi:http` 0.3) needs a `wasm32-wasip3` toolchain
+(currently built from source on nightly), which is why it is not part of the
+routine checks above.
 
 ## License
 
