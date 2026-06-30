@@ -1,6 +1,6 @@
 [package]
 name = "fusionauth_jwt_rs"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 description = "WASI-compatible FusionAuth JWT verification (JWKS / RS256) for wasmCloud components"
 license = "MIT"
