@@ -42,5 +42,5 @@ wasip3 = { version = "0.7", optional = true }
 # The test harness signs sample tokens itself, so it needs raw RSA + SHA-2 and
 # base64. These are test-only; the library verifies via `jsonwebtoken`.
 rsa = { version = "0.9", features = ["pem"] }
-sha2 = { version = "0.10", features = ["oid"] }
+sha2 = { version = "0.11.0", features = ["oid"] }
 base64 = "0.22"
