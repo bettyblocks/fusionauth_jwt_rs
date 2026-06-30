@@ -19,10 +19,26 @@ jsonwebtoken = { version = "10", default-features = false, features = ["rust_cry
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# wasi:http and wasi:clocks bindings are only used when targeting wasm.
-# On the host (e.g. `cargo test`) the pure verification path is used instead.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[features]
+# Enable the self-contained `Verifier::verify_token` JWKS fetch on native
+# (non-wasm) targets, via a blocking `ureq` client. Off by default so the pure
+# `verify_with_jwks` path stays dependency-light. The wasm targets always have
+# their own fetch backend and don't need this feature.
+native-http = ["dep:ureq"]
+
+# Native HTTP client for the `native-http` feature (non-wasm only).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "3", optional = true }
+
+# wasip2: JWKS fetch over `wasi:http` 0.2.
+[target.'cfg(all(target_arch = "wasm32", target_env = "p2"))'.dependencies]
 wasi = "0.14"
+
+# wasip3: JWKS fetch over `wasi:http` 0.3. `wasi-fetch` is the async client;
+# `wasip3` provides the `block_on` runtime bridge.
+[target.'cfg(all(target_arch = "wasm32", target_env = "p3"))'.dependencies]
+wasi-fetch = "0.2"
+wasip3 = "0.7"
 
 [dev-dependencies]
 # The test harness signs sample tokens itself, so it needs raw RSA + SHA-2 and

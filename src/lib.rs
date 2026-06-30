@@ -30,7 +30,9 @@ mod jwks;
 mod token;
 mod validation;
 
-#[cfg(target_arch = "wasm32")]
+// One JWKS-fetch backend is compiled per target that supports it: the two wasm
+// targets always, native only behind the `native-http` feature.
+#[cfg(any(target_arch = "wasm32", feature = "native-http"))]
 mod http;
 
 use jsonwebtoken::errors::ErrorKind;
@@ -101,10 +103,13 @@ impl Verifier {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native-http"))]
 impl Verifier {
-    /// Verify a token end to end: fetch (and cache) the JWKS over `wasi:http`,
-    /// match the `kid`, verify the signature and validate the claims.
+    /// Verify a token end to end: fetch (and cache) the JWKS, match the `kid`,
+    /// verify the signature and validate the claims.
+    ///
+    /// The JWKS is fetched over the per-target backend: `wasi:http` on wasm, or
+    /// a blocking `ureq` client on native (the `native-http` feature).
     ///
     /// Mirrors the Elixir `JWKS_Strategy`: if the token's `kid` is not in the
     /// cached set, the JWKS is refetched once (keys may have rotated) before
