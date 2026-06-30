@@ -30,7 +30,12 @@ mod jwks;
 mod token;
 mod validation;
 
-#[cfg(target_arch = "wasm32")]
+// The JWKS-fetch backend is opt-in via a feature matching the build target.
+#[cfg(any(
+    all(not(target_arch = "wasm32"), feature = "native-http"),
+    all(target_arch = "wasm32", feature = "wasip2"),
+    all(target_arch = "wasm32", feature = "wasip3"),
+))]
 mod http;
 
 use jsonwebtoken::errors::ErrorKind;
@@ -101,10 +106,18 @@ impl Verifier {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(
+    all(not(target_arch = "wasm32"), feature = "native-http"),
+    all(target_arch = "wasm32", feature = "wasip2"),
+    all(target_arch = "wasm32", feature = "wasip3"),
+))]
 impl Verifier {
-    /// Verify a token end to end: fetch (and cache) the JWKS over `wasi:http`,
-    /// match the `kid`, verify the signature and validate the claims.
+    /// Verify a token end to end: fetch (and cache) the JWKS, match the `kid`,
+    /// verify the signature and validate the claims.
+    ///
+    /// The JWKS is fetched over the backend selected by feature: `wasi:http`
+    /// (`wasip2`/`wasip3`) on wasm, or a blocking `ureq` client (`native-http`)
+    /// on native.
     ///
     /// Mirrors the Elixir `JWKS_Strategy`: if the token's `kid` is not in the
     /// cached set, the JWKS is refetched once (keys may have rotated) before

@@ -1,21 +1,20 @@
-//! JWKS fetching over `wasi:http/outgoing-handler`.
+//! JWKS fetching over `wasi:http/outgoing-handler@0.2` (`wasm32-wasip2`).
 //!
-//! This module only compiles for `wasm32` targets. When linked into a
-//! wasmCloud component, the host satisfies the `wasi:http` import; the
-//! component's world must declare `import wasi:http/outgoing-handler`.
+//! When linked into a wasmCloud component, the host satisfies the `wasi:http`
+//! import; the component's world must declare `import wasi:http/outgoing-handler`.
 
 use wasi::http::outgoing_handler;
 use wasi::http::types::{Fields, IncomingBody, Method, OutgoingRequest, Scheme};
 use wasi::io::streams::StreamError;
 
+use super::JWKS_PATH;
 use crate::error::Error;
 use crate::jwks::Jwks;
 
-const JWKS_PATH: &str = "/.well-known/jwks.json";
 const READ_CHUNK: u64 = 8 * 1024;
 
 /// Fetch and parse the JWKS from `<base_url>/.well-known/jwks.json`.
-pub fn fetch_jwks(base_url: &str) -> Result<Jwks, Error> {
+pub(crate) fn fetch_jwks(base_url: &str) -> Result<Jwks, Error> {
     let (scheme, authority, base_path) = parse_url(base_url)?;
     let path = format!("{}{}", base_path.trim_end_matches('/'), JWKS_PATH);
 
