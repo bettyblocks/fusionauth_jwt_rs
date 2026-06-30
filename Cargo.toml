@@ -1,6 +1,6 @@
 [package]
 name = "fusionauth_jwt_rs"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "WASI-compatible FusionAuth JWT verification (JWKS / RS256) for wasmCloud components"
 license = "MIT"
@@ -20,16 +20,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [features]
-# JWKS-fetch backend for `Verifier::verify_token`. Enable exactly the one that
-# matches your build target; none is on by default, so only the dependency you
-# pick is compiled in. `verify_with_jwks` needs no backend and always works.
+# JWKS-fetch backend for `Verifier::verify_token` on wasm. Enable the one that
+# matches your build target; they are mutually exclusive, and only the
+# dependency you pick is compiled in. Native (non-wasm) targets always use the
+# `ureq` backend below and need no feature.
 wasip2 = ["dep:wasi"]                      # wasm32-wasip2: wasi:http 0.2
 wasip3 = ["dep:wasi-fetch", "dep:wasip3"]  # wasm32-wasip3: wasi:http 0.3
-native-http = ["dep:ureq"]                 # native (non-wasm): blocking ureq
 
-# Native HTTP client (non-wasm only), pulled in by the `native-http` feature.
+# Native (non-wasm) JWKS-fetch backend: a blocking `ureq` client, always on.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-ureq = { version = "3", optional = true }
+ureq = "3"
 
 # wasm fetch backends (wasm only), each pulled in by its feature above.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

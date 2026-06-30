@@ -1,9 +1,9 @@
 //! JWKS fetching from `<base_url>/.well-known/jwks.json`.
 //!
-//! The backend is selected by feature (`wasip2`, `wasip3`, or `native-http`),
-//! each exposing `fetch_jwks(base_url) -> Result<Jwks, Error>`:
+//! Each backend exposes `fetch_jwks(base_url) -> Result<Jwks, Error>`. Native is
+//! the default; the wasm backends are selected by feature:
 //!
-//! - **`native-http`** (non-wasm): blocking [`ureq`] client.
+//! - **native** (non-wasm, default): blocking [`ureq`] client.
 //! - **`wasip2`** (`wasm32-wasip2`): `wasi:http/outgoing-handler@0.2` via the
 //!   [`wasi`](https://docs.rs/wasi) crate.
 //! - **`wasip3`** (`wasm32-wasip3`): `wasi:http` 0.3 via [`wasi-fetch`]. See the
@@ -18,10 +18,20 @@ compile_error!("features `wasip2` and `wasip3` are mutually exclusive — enable
 /// Path of the JWKS document, relative to the FusionAuth base URL.
 pub(crate) const JWKS_PATH: &str = "/.well-known/jwks.json";
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "native-http"))]
+// Native (non-wasm): the `ureq` backend is always available — no feature needed.
+#[cfg(not(target_arch = "wasm32"))]
 mod native;
-#[cfg(all(not(target_arch = "wasm32"), feature = "native-http"))]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::fetch_jwks;
+
+// wasm with no backend feature: fail with a clear message. The stub keeps
+// `fetch_jwks` resolved so the only error reported is the one below.
+#[cfg(all(target_arch = "wasm32", not(any(feature = "wasip2", feature = "wasip3"))))]
+compile_error!("on wasm, enable a JWKS-fetch backend feature: `wasip2` or `wasip3`");
+#[cfg(all(target_arch = "wasm32", not(any(feature = "wasip2", feature = "wasip3"))))]
+pub(crate) fn fetch_jwks(_base_url: &str) -> Result<crate::jwks::Jwks, crate::error::Error> {
+    unreachable!()
+}
 
 #[cfg(all(target_arch = "wasm32", feature = "wasip2"))]
 mod wasip2;

@@ -1,5 +1,5 @@
 //! JWKS fetching on native (non-wasm) targets via the blocking [`ureq`] client.
-//! Compiled only when the `native-http` feature is enabled.
+//! This is the default backend on non-wasm targets; no feature is required.
 //!
 //! [`ureq`]: https://docs.rs/ureq
 
